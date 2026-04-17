@@ -244,11 +244,21 @@ mod openh264_impl {
 
     impl H264Decoder for OpenH264Decoder {
         fn decode(&mut self, data: &[u8]) -> DecoderResult<DecodedFrame> {
-            self.avc_to_annex_b(data);
+            // Per MS-RDPEGFX 2.2.4.4, `avc420EncodedBitstream1` is formatted
+            // in Annex B byte-stream form (ITU-T H.264 §B.1) — NAL units
+            // already prefixed with `00 00 00 01` or `00 00 01` start codes.
+            // Convert from AVC (length-prefixed) to Annex B only when the
+            // wire bytes look length-prefixed, otherwise pass through.
+            let annex_b_input: &[u8] = if super::looks_like_annex_b(data) {
+                data
+            } else {
+                self.avc_to_annex_b(data);
+                &self.annex_b_buffer
+            };
 
             let yuv = self
                 .decoder
-                .decode(&self.annex_b_buffer)
+                .decode(annex_b_input)
                 .map_err(|e| DecoderError::new("OpenH264 decode failed", e))?
                 .ok_or_else(|| DecoderError::msg("OpenH264 returned no picture"))?;
 
@@ -287,6 +297,19 @@ mod openh264_impl {
             // transparently when the next I-frame arrives.
         }
     }
+}
+
+/// MS-RDPEGFX ships `avc420EncodedBitstream1` in Annex B byte-stream
+/// format (ITU-T H.264 §B.1). Some IronRDP paths pre-Phase-4 assumed
+/// AVC length-prefixed layout (as used in MP4 containers). This
+/// predicate lets the OpenH264 decoder honour the spec: if the input
+/// starts with a recognisable Annex B start code, skip the
+/// length→start-code conversion and hand the bytes straight to
+/// OpenH264.
+#[cfg(feature = "openh264")]
+fn looks_like_annex_b(data: &[u8]) -> bool {
+    (data.len() >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1)
+        || (data.len() >= 3 && data[0] == 0 && data[1] == 0 && data[2] == 1)
 }
 
 #[cfg(feature = "openh264")]

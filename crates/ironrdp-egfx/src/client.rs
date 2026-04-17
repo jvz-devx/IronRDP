@@ -719,8 +719,21 @@ impl GraphicsPipelineClient {
             .decode(stream.data)
             .map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
 
-        let dest_width = dest_rect.width();
-        let dest_height = dest_rect.height();
+        // Some servers (observed: freerdp-shadow 3.24) use the inclusive
+        // rectangle's `right`/`bottom` fields in an exclusive sense —
+        // e.g. `right=1280` for a 1280-wide surface. `InclusiveRectangle`
+        // reads that as width 1281, producing an off-by-one against the
+        // decoded frame. Clamp the destination to the decoded dimensions
+        // when it's over by a single pixel so we can still emit the
+        // tile. Larger mismatches still error.
+        let mut dest_width = dest_rect.width();
+        let mut dest_height = dest_rect.height();
+        if u32::from(dest_width) == frame.width.saturating_add(1) {
+            dest_width -= 1;
+        }
+        if u32::from(dest_height) == frame.height.saturating_add(1) {
+            dest_height -= 1;
+        }
 
         // Decoded frame must be at least as large as the destination rectangle.
         // Larger is expected (macroblock alignment) and handled by cropping.
