@@ -561,6 +561,13 @@ impl Sequence for ClientConnector {
                         written,
                         ClientConnectorState::ConnectionFinalization { connection_activation },
                     ),
+                    // Absorbed a pre-activation Deactivate All PDU (see
+                    // connection_activation.rs); stay here and wait for
+                    // the real Demand Active.
+                    ConnectionActivationState::CapabilitiesExchange { .. } => (
+                        written,
+                        ClientConnectorState::CapabilitiesExchange { connection_activation },
+                    ),
                     _ => return Err(general_err!("invalid state (this is a bug)")),
                 }
             }
@@ -689,7 +696,15 @@ fn create_gcc_blocks<'a>(
                     let mut early_capability_flags = ClientEarlyCapabilityFlags::VALID_CONNECTION_TYPE
                         | ClientEarlyCapabilityFlags::SUPPORT_ERR_INFO_PDU
                         | ClientEarlyCapabilityFlags::STRONG_ASYMMETRIC_KEYS
-                        | ClientEarlyCapabilityFlags::SUPPORT_SKIP_CHANNELJOIN;
+                        | ClientEarlyCapabilityFlags::SUPPORT_SKIP_CHANNELJOIN
+                        // Advertise MS-RDPEGFX support unconditionally. Some
+                        // servers (observed: krdp / KDE Plasma 6) refuse the
+                        // connection outright if this flag is absent. The
+                        // actual EGFX negotiation still happens later on the
+                        // dynvc channel, so this is free when the client is
+                        // not wired for EGFX — the server just won't see a
+                        // capability advertisement on that channel.
+                        | ClientEarlyCapabilityFlags::SUPPORT_DYN_VC_GFX_PROTOCOL;
 
                     // TODO(#136): support for ClientEarlyCapabilityFlags::SUPPORT_STATUS_INFO_PDU
 

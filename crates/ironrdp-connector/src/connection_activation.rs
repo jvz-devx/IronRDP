@@ -117,14 +117,30 @@ impl Sequence for ConnectionActivationSequence {
                     );
                 }
 
-                let capability_sets = if let rdp::headers::ShareControlPdu::ServerDemandActive(server_demand_active) =
-                    share_control_ctx.pdu
-                {
-                    server_demand_active.pdu.capability_sets
-                } else {
-                    return Err(general_err!(
-                        "unexpected Share Control Pdu (expected ServerDemandActive)",
-                    ));
+                let capability_sets = match share_control_ctx.pdu {
+                    rdp::headers::ShareControlPdu::ServerDemandActive(server_demand_active) => {
+                        server_demand_active.pdu.capability_sets
+                    }
+                    // Per [1.3.1.3], a server may request a fresh activation cycle
+                    // by sending a Deactivate All PDU. Some servers (observed: KDE
+                    // krdp) emit one at the top of the very first activation
+                    // sequence, before the real Demand Active. Stay in the current
+                    // state and wait for the Demand Active that follows.
+                    //
+                    // [1.3.1.3]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
+                    rdp::headers::ShareControlPdu::ServerDeactivateAll(_) => {
+                        debug!("Received Deactivate All PDU; awaiting Demand Active");
+                        self.state = ConnectionActivationState::CapabilitiesExchange {
+                            io_channel_id,
+                            user_channel_id,
+                        };
+                        return Ok(Written::Nothing);
+                    }
+                    _ => {
+                        return Err(general_err!(
+                            "unexpected Share Control Pdu (expected ServerDemandActive)",
+                        ));
+                    }
                 };
 
                 for c in &capability_sets {
